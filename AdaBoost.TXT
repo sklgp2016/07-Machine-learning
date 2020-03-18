@@ -1,0 +1,135 @@
+%% -------------------------------------------------------------------
+% Descrption : AdaBoost Classification Demo
+% Author : GeoTeam
+% Date:05-07-2019
+%% -------------------------------------------------------------------
+function adaboostDemo
+close all
+clear all
+clc
+%% Settings
+weakLearnerNum = 10; % how many weak classifiers will learn during AdaBoost training
+displayTrainingProcess = 1; % whether display training process
+%% Input traning dataset
+positive = [Pdataset];
+negative = [Ndataset];
+%% AdaBoost training process
+data = [positive; negative];
+labels = [ones(size(positive,1),1); -ones(size(negative,1),1)];
+%% W can be used the ones for initial ones
+weights = [ones(size(positive,1),1) ./ (2*size(positive,1)); ones(size(negative,1),1) ./ (2*size(negative,1))];;
+%% weakLearner comes from the Pelm (PSO-ELM)
+weakLearners = Pelm(weakLearnerNum,4); % [dimension, threshold, polarity, errorRate]
+for t = 1 : weakLearnerNum
+    % re-normalize the weights
+    weights = weights ./ sum(weights);
+    % select best classifier
+    [dimension, threshold, polarity, errorRate] = selectBestClassifier(data, labels, weights);
+    % update sample weights
+    weights = updateSampleWeights(data, labels, weights, dimension, threshold, polarity, errorRate, displayTrainingProcess);
+    % load weak classifier
+    weakLearners(t,:) = [dimension, threshold, polarity, errorRate];
+end
+%% AdaBoosting predict process
+figure(3)
+hold on
+for i = 1 : size(data,1)
+    % classify by weak classifiers
+    x = data(i,:);
+    if adaboostingPredict(x, weakLearners) == 1
+        plot(x(1), x(2), '.r');
+    else
+        plot(x(1), x(2), '.b');
+    end
+end
+ezpolar(@(x)1);ezpolar(@(x)2);
+axis equal
+hold off
+%% Classify sample
+function label = adaboostingPredict(x, weakLearners)
+dimensions = weakLearners(:,1);
+thresholds = weakLearners(:,2);
+polarities = weakLearners(:,3);
+errorRates = weakLearners(:,4);
+beta = errorRates ./ (1-errorRates);
+alpha = log(1./beta);
+features = x(dimensions);
+hypothesis = (polarities' .* features)' < (polarities .* thresholds);
+label = (alpha' * hypothesis) > (sum(alpha) * 0.5);
+%% Update samples weights
+function weights = updateSampleWeights(data, labels, weights, dimension, threshold, polarity, errorRate, displayTrainingProcess)
+% classify data by current threshold
+positive = find(polarity.*data(:,dimension) < polarity*threshold);
+negative = find(polarity.*data(:,dimension) >= polarity*threshold);
+% find the correct samples
+positive(find(labels(positive) ~= 1)) = [];
+negative(find(labels(negative) ~= -1)) = [];
+corrects = [positive; negative];
+weights(corrects) = weights(corrects) .* (errorRate / (1-errorRate));
+% plot current weak classifier and weighted samples
+if displayTrainingProcess == 1
+    figure(2)
+    clf(figure(2),'reset')
+    hold on
+    for i = 1 : size(data,1)
+        color = 'y'; % default : incorrect classfied samples
+        if ~isempty(find(positive == i)) % correct classified positive samples
+            color = 'r';
+        end
+        if ~isempty(find(negative == i)) % correct classified negative samples
+            color = 'b';
+        end
+        plot(data(i,1), data(i,2), 'o', 'MarkerEdgeColor', 'k', 'MarkerFaceColor', color, 'MarkerSize', weights(i)*size(data,1)*10);
+    end
+    if dimension == 1
+        line([threshold, threshold], [-2, 2], 'LineWidth', 4, 'Color', [.8 .8 .8])
+    else
+        line([-2, 2], [threshold, threshold], 'LineWidth', 4, 'Color', [.8 .8 .8])
+    end
+    ezpolar(@(x)1);ezpolar(@(x)2);
+    axis equal
+    hold off
+    pause
+end
+%% Select best classifier
+function [bestDim, bestThreshold, bestPolarity, bestErrorRate] = selectBestClassifier(data, labels, weights)
+bestDim = 0;
+bestThreshold = 0;
+bestPolarity = 0;
+bestErrorRate = sum(weights);
+for dim = 1 : size(data,2)
+    [threshold, polarity, errorRate] = buildFeatureClassifier(data(:,dim), labels, weights);
+    if errorRate <= bestErrorRate
+        bestDim = dim;
+        bestThreshold = threshold;
+        bestPolarity = polarity;
+        bestErrorRate = errorRate;
+    end
+end
+%% Build feature classifier
+function [bestThreshold, bestPolarity, bestErrorRate] = buildFeatureClassifier(data, labels, weights)
+bestThreshold = 0;
+bestPolarity = 0;
+bestErrorRate = sum(weights);
+% sort data
+[data, index] = sort(data);
+labels = labels(index);
+weights = weights(index);
+% generate possible splitters
+splitters = data(1:end-1) + 0.5 * (data(2:end) - data(1:end-1));
+for i = 1 : size(splitters,1)
+    threshold = splitters(i);
+    for polarity = -1 : 2 : 1 % polarity is (+) / (-)
+        positive = find(polarity.*data < polarity*threshold);
+        negative = find(polarity.*data >= polarity*threshold);
+        positive(find(labels(positive) == 1)) = []; % dimiss correct samples
+        negative(find(labels(negative) == -1)) = [];
+        incorrects = [positive; negative];
+        errorRate = sum(weights(incorrects));
+        if errorRate <= bestErrorRate
+            bestThreshold = threshold;
+            bestPolarity = polarity;
+            bestErrorRate = errorRate;
+        end
+    end
+end
